@@ -1,0 +1,199 @@
+"""
+	This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License 
+	as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+	This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; 
+	without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+"""
+
+
+import esp
+import network
+import os
+import socket
+import time
+import ntptime
+import cryptolib
+
+SSID = "<ssid>"
+PASSWORD = "<password>"
+IP = "<ip address of the server>"
+PORT = 6060
+MAC = ""
+
+
+#Configure network
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+factors = []
+
+
+def setTime():
+    while True:
+        try:
+            ntptime.settime()
+        except:
+            time.sleep(1)
+    
+        break
+
+    curTime = str(time.time())
+    
+    return curTime
+
+
+def connectWifi():
+    wlan = network.WLAN(network.STA_IF) #set up station device
+    wlan.active(True) #Activate the interface
+
+    #Wait until connection is active to continue
+    if not wlan.isconnected():
+        print("Connecting to network...")
+        wlan.connect(SSID, PASSWORD)
+        
+        while not wlan.isconnected():
+            pass
+        
+    #Print network info
+    print("\nNetwork config", wlan.ifconfig())
+    global MAC
+    MAC = wlan.config('mac')
+
+
+def getKey(curTime):
+    divInt = int(curTime[2:-1]) #Cut off first 2 digits of the string
+
+    cryptKey = 1
+    for i in range(2, divInt):
+        if divInt % i == 0:
+            #Only find the first 5 factors
+            if len(factors) >= 5: #Only find the first 5 factors
+                break
+            else:
+                factors.append(i)
+    
+
+    if len(factors) == 0: #If the key is a prime number, just use the key as a value
+        for i in curTime:
+            factors.append(int(i))
+
+    for i in factors:
+        cryptKey = cryptKey * i
+    
+    cryptKey = cryptKey * cryptKey * cryptKey
+    return cryptKey
+        
+
+def writeCount(filePath, counter):
+    f = open(filePath, "w+") #open file
+    f.write(str(counter))
+    f.close()
+    
+    
+def readCount(filePath):
+    #If the file doesn't exist, create it
+    try:
+        f = open(filePath, "r") #open file
+    except:
+        f = open(filePath, "w+")
+        f.write("0")
+        f.close()
+        
+    f = open(filePath, "r")
+    count = f.read()
+    
+    if count == "":
+        count = "0"
+    
+    print("Counter: ", count)
+    f.close()
+    return count
+
+        
+def addLetter(key):
+    keyStr = str(key)
+    #Create array to characters can be inserted in
+    tmpArr = []
+    
+    #Add each letter from the string into the array
+    for i in keyStr:
+        tmpArr.append(i)
+    
+    for i in range(len(keyStr)):
+        #Convert i into a character, and use it as the position to insert into the array
+        tmpArr.insert(int(keyStr[i]), chr(int(keyStr[i])+97))
+        
+    return tmpArr
+    
+    
+def enc(plain):
+    pad = 16 - len(plain) % 16
+    plain = plain + " "*pad
+    encrypted = cipher.encrypt(plaintext)
+    return encrypted
+    
+
+def dec(encrypted, cipher):
+    plain = cipher.decrypt(encrypted)
+    return plain
+
+
+def main():
+    filePath = "counter.txt"
+    counter = readCount(filePath)
+    counter = int(counter)
+    
+    #Connect to WiFi
+    connectWifi()
+    
+    curTime = setTime()
+    
+    #Obfuscate the key
+    total = getKey(curTime)
+    keyArr = addLetter(total)
+    key = "".join(keyArr)
+    
+    while len(key) < 32:
+        key += key
+        
+    key = key[0:32]
+    key = key.encode()
+    
+    cipher = cryptolib.aes(key, 1)
+    print("Connecting...")
+
+    s.connect((IP, PORT))
+    print("Connected")
+    s.send(MAC)
+    time.sleep(1)
+    s.send(curTime.encode())
+    
+    
+    print(MAC)
+    
+    while True:
+        message = s.recv(255)
+        decr = cipher.decrypt(message)
+        decr = decr.decode()
+        decr = int(decr)
+        
+        if decr == 1:
+            counter += 1
+            writeCount(filePath, counter)
+            break
+        elif decr == 0:
+            s.close()
+            break
+        
+        time.sleep(1)
+    
+    s.close()
+        
+        
+    
+    
+
+main()
